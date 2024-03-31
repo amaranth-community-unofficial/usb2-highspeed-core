@@ -151,6 +151,18 @@ class USBDevice(Elaboratable):
         #
         self._endpoints = []
 
+        # Try to retrieve the bus name, needed for USB device hooks from platform
+        self._bus_name = None
+        try:
+            if hasattr(bus, 'name'):
+                self._bus_name = bus.name
+            elif hasattr(bus, 'clk'):
+                # PureInterface does not have a name attribute, but we can use the
+                # first item of a path tuple
+                self._bus_name = bus.clk.path[0]
+        except (AttributeError, TypeError):
+            pass
+
 
     def add_endpoint(self, endpoint):
         """ Adds an endpoint interface to the device.
@@ -201,6 +213,12 @@ class USBDevice(Elaboratable):
 
     def elaborate(self, platform):
         m = Module()
+
+        # Call any hooks registered for the bus in the platform definition.
+        if hasattr(platform, "usb_device_hooks"):
+            hook = platform.usb_device_hooks.get(self._bus_name)
+            if hook is not None:
+                hook(self, m)
 
         # If we have a bus translator, include it in our submodules.
         if self.translator:

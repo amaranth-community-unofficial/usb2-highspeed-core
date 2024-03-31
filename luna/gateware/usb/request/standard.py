@@ -90,6 +90,11 @@ class StandardRequestHandler(ControlRequestHandler):
         # Handlers.
         #
         with m.If(setup.type == USBRequestType.STANDARD):
+
+            # Only handle setup packet if not blacklisted
+            blacklisted = functools.reduce(operator.__or__, (f(setup) for f in self._blacklist), Const(0))
+            m.d.comb += interface.claim.eq(~blacklisted)
+
             with m.FSM(domain="usb"):
 
                 # IDLE -- not handling any active request
@@ -106,8 +111,6 @@ class StandardRequestHandler(ControlRequestHandler):
                     # If we've received a new setup packet, handle it.
                     with m.If(setup.received):
 
-                        # Only handle setup packet if not blacklisted
-                        blacklisted = functools.reduce(operator.__or__, (f(setup) for f in self._blacklist), Const(0))
                         with m.If(~blacklisted):
 
                             # Select which standard packet we're going to handler.
@@ -123,7 +126,7 @@ class StandardRequestHandler(ControlRequestHandler):
                                     m.next = 'GET_DESCRIPTOR'
                                 with m.Case(USBStandardRequests.GET_CONFIGURATION):
                                     m.next = 'GET_CONFIGURATION'
-                                with m.Case():
+                                with m.Default():
                                     m.next = 'UNHANDLED'
 
 
