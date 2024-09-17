@@ -3,8 +3,8 @@ requires = ["setuptools>=64", "setuptools-git-versioning<2"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "luna-usb"
-description = "Amaranth HDL framework for FPGA-based USB solutions"
+name = "usb2-highspeed-core"
+description = "USB2 highspeed core written in amaranth HDL"
 license = { text = "BSD" }
 readme = "README.md"
 requires-python = ">=3.8"
@@ -36,8 +36,6 @@ dependencies = [
     "pyusb>1.1.1",
     "pyvcd>=0.2.4",
     "amaranth~=0.4.0",
-    "usb-descriptors @ git+https://github.com/amaranth-farm/python-usb-descriptors.git@master",
-    "amlib @ git+https://github.com/amaranth-farm/amlib@main",
 ]
 
 [project.optional-dependencies]
