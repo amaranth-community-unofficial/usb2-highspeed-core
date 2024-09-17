@@ -6,13 +6,10 @@
 
 """ Gateware that handles USB bus resets & speed detection. """
 
-import unittest
-
 from amaranth              import *
 
 from .                     import USBSpeed
 from ...interface.utmi     import UTMITransmitInterface, UTMIOperatingMode, UTMITerminationSelect
-from ...test               import LunaGatewareTestCase, usb_domain_test_case
 
 
 def _generate_wide_incrementer(m, platform, adder_input):
@@ -68,6 +65,8 @@ class USBResetSequencer(Elaboratable):
         be held in perpetual bus reset, and reset handshaking will be disabled.
     line_state: Signal(2), input
         The UTMI linestate signals; used to read the current state of the USB D+ and D- lines.
+    disconnect: Signal(), input
+        If set, the device will be switched into non-driving operating mode to force a host disconnect.
 
     bus_reset: Signal(), output
         Strobe; pulses high for one cycle when a bus reset is detected. This signal indicates that the
@@ -126,6 +125,8 @@ class USBResetSequencer(Elaboratable):
         self.vbus_connected     = Signal()
         self.line_state         = Signal(2)
 
+        self.disconnect         = Signal()
+
         self.bus_reset          = Signal()
         self.suspended          = Signal()
 
@@ -169,7 +170,7 @@ class USBResetSequencer(Elaboratable):
         with m.If(self.current_speed == USBSpeed.HIGH):
             m.d.comb += bus_idle.eq(self.line_state == self._LINE_STATE_SQUELCH)
 
-        # Full and low-speed busses see a 'J' state when idle, due to the device pull-up restistors.
+        # Full and low-speed busses see a 'J' state when idle, due to the device pull-up resistors.
         # (The line_state values for these are flipped between speeds.) [USB2.0: 7.1.7.4.1; USB2.0: Table 7-2].
         with m.Elif(self.current_speed == USBSpeed.FULL):
             m.d.comb += bus_idle.eq(self.line_state == self._LINE_STATE_FS_HS_J)
@@ -203,7 +204,9 @@ class USBResetSequencer(Elaboratable):
                 # potential reset. Keep our timer at zero.
                 with m.If(self.line_state != self._LINE_STATE_SE0):
                     m.d.usb += timer.eq(0)
-
+                    # Enter forced disconnect when self.disconnect is high.
+                    with m.If(self.disconnect):
+                        m.next = "DISCONNECT"
 
                 # If VBUS isn't connected, don't go through the whole reset process;
                 # but also consider ourselves permanently in reset. This ensures we
@@ -245,6 +248,9 @@ class USBResetSequencer(Elaboratable):
                 # potential reset. Keep our timer at zero.
                 with m.If(self.line_state != self._LINE_STATE_SE0):
                     m.d.usb += timer.eq(0)
+                    # Enter forced disconnect when self.disconnect is high.
+                    with m.If(self.disconnect):
+                        m.next = "DISCONNECT"
 
                 # If VBUS isn't connected, our device/host relationship is effectively
                 # a blank state. We'll want to present our detection pull-up to the host,
@@ -511,78 +517,27 @@ class USBResetSequencer(Elaboratable):
                     with m.Else():
                         m.next = 'START_HS_DETECTION'
 
+
+            # DISCONNECT -- our device has entered a forced USB disconnect; hold the device in
+            # NON_DRIVING operating mode for Tddis=0.25us and wait for self.disconnect to go low.
+            with m.State('DISCONNECT'):
+                m.d.usb += self.operating_mode.eq(UTMIOperatingMode.NON_DRIVING)
+
+                # A disconnect condition is indicated if the host or hub is not driving the data lines and an
+                # SE0 persists on a downstream facing port for more than Tddis.
+                # [USB2.0: 7.1.7.3].
+                tddis = Signal()
+                with m.If(timer == self._CYCLES_2P5_MICROSECONDS):
+                    m.d.usb += tddis.eq(1)
+
+                # Exit DISCONNECT once the Tddis timer has expired and self.disconnect is low.
+                with m.If((~self.disconnect) & tddis):
+                    m.d.usb += [
+                        tddis.eq(0),
+                        self.current_speed.eq(USBSpeed.FULL),
+                        self.operating_mode.eq(UTMIOperatingMode.NORMAL),
+                        self.termination_select.eq(1),
+                    ]
+                    m.next = 'INITIALIZE'
+
         return m
-
-
-class USBResetSequencerTest(LunaGatewareTestCase):
-    FRAGMENT_UNDER_TEST = USBResetSequencer
-
-    SYNC_CLOCK_FREQUENCY = None
-    USB_CLOCK_FREQUENCY  = 60e6
-
-    def instantiate_dut(self):
-        dut = super().instantiate_dut()
-
-        # Test tweak: squish down our delays to speed up sim.
-        dut._CYCLES_2P5_MICROSECONDS = 10
-
-        return dut
-
-
-    def initialize_signals(self):
-
-        # Start with a non-reset line-state.
-        yield self.dut.line_state.eq(0b01)
-
-
-    @usb_domain_test_case
-    def test_full_speed_reset(self):
-        dut = self.dut
-
-        yield from self.advance_cycles(10)
-
-        # Before we detect a reset, we should be at normal FS,
-        # and we should be in reset until VBUS is provided.
-        self.assertEqual((yield dut.bus_reset),          1)
-        self.assertEqual((yield dut.current_speed),      USBSpeed.FULL)
-        self.assertEqual((yield dut.operating_mode),     UTMIOperatingMode.NORMAL)
-        self.assertEqual((yield dut.termination_select), UTMITerminationSelect.LS_FS_NORMAL)
-
-        # Once we apply VBUS, we should drop out of reset...
-        yield dut.vbus_connected.eq(1)
-        yield
-        self.assertEqual((yield dut.bus_reset), 0)
-
-        # ... and stay that way.
-        yield from self.advance_cycles(dut._CYCLES_2P5_MICROSECONDS)
-        self.assertEqual((yield dut.bus_reset), 0)
-
-        yield dut.line_state.eq(0)
-
-        # After assertion of SE0, we should remain out of reset for 2.5uS...
-        yield
-        self.assertEqual((yield dut.bus_reset), 0)
-
-        # ... and then we should see a cycle of reset.
-        yield from self.advance_cycles(dut._CYCLES_2P5_MICROSECONDS + 1)
-        self.assertEqual((yield dut.bus_reset), 1)
-
-        yield from self.advance_cycles(10)
-        yield dut.line_state.eq(0b01)
-        yield
-
-        # Finally, we should arrive in FS, post-reset.
-        self.assertEqual((yield dut.current_speed),      USBSpeed.FULL)
-        self.assertEqual((yield dut.operating_mode),     UTMIOperatingMode.NORMAL)
-        self.assertEqual((yield dut.termination_select), UTMITerminationSelect.LS_FS_NORMAL)
-
-
-    #
-    # It would be lovely to have tests that run through each of our reset/suspend
-    # cases here; but currently the time it takes run through the relevant delays is
-    # prohibitive. :(
-    #
-
-
-if __name__ == "__main__":
-    unittest.main()

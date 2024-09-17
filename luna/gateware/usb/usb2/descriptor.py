@@ -6,7 +6,6 @@
 """ Utilities for building USB descriptors into gateware. """
 
 import struct
-import unittest
 import functools
 
 from amaranth                                import *
@@ -15,8 +14,7 @@ from usb_protocol.types.descriptors.standard import StandardDescriptorNumbers
 
 from ..stream                                import USBInStreamInterface
 from ...stream.generator                     import ConstantStreamGenerator
-from ...test                                 import LunaUSBGatewareTestCase, usb_domain_test_case
-
+from ...utils.bus                            import OneHotMultiplexer
 
 class USBDescriptorStreamGenerator(ConstantStreamGenerator):
     """ Specialized stream generator for generating USB descriptor constants. """
@@ -103,7 +101,10 @@ class GetDescriptorHandlerDistributed(Elaboratable):
         #
         for type_number, index, raw_descriptor in self._descriptors:
             # Create the generator...
-            generator = USBDescriptorStreamGenerator(raw_descriptor)
+            if isinstance(raw_descriptor, bytes):
+                generator = USBDescriptorStreamGenerator(raw_descriptor)
+            else:
+                generator = raw_descriptor()
             descriptor_generators[(type_number, index)] = generator
 
             m.d.comb += [
@@ -556,158 +557,62 @@ class GetDescriptorHandlerBlock(Elaboratable):
         return m
 
 
-class GetDescriptorHandlerBlockTest(LunaUSBGatewareTestCase):
-    descriptors = DeviceDescriptorCollection()
+class GetDescriptorHandlerMux(Elaboratable):
+    def __init__(self, domain="usb"):
+        self._domain        = domain
+        self._handlers      = []
+        #
+        # I/O port
+        #
+        self.value          = Signal(16)
+        self.length         = Signal(16)
 
-    with descriptors.DeviceDescriptor() as d:
-        d.bcdUSB             = 2.00
-        d.idVendor           = 0x1234
-        d.idProduct          = 0x4567
-        d.iManufacturer      = "Manufacturer"
-        d.iProduct           = "Product"
-        d.iSerialNumber      = "ThisSerialNumberIsResultsInADescriptorLongerThan64Bytes"
-        d.bNumConfigurations = 1
+        self.start          = Signal()
+        self.start_position = Signal(11)
 
-        with descriptors.ConfigurationDescriptor() as c:
-            c.bmAttributes = 0xC0
-            c.bMaxPower = 50
+        self.tx             = USBInStreamInterface()
+        self.stall          = Signal()
 
-            with c.InterfaceDescriptor() as i:
-                i.bInterfaceNumber   = 0
-                i.bInterfaceClass    = 0x02
-                i.bInterfaceSubclass = 0x02
-                i.bInterfaceProtocol = 0x01
+    def add_descriptor_handler(self, handler):
+        self._handlers.append(handler)
 
-                with i.EndpointDescriptor() as e:
-                    e.bEndpointAddress = 0x81
-                    e.bmAttributes     = 0x03
-                    e.wMaxPacketSize   = 64
-                    e.bInterval        = 11
+    def elaborate(self, platform):
+        m = Module()
 
-    # HID Descriptor (Example E.8 of HID specification)
-    descriptors.add_descriptor(b'\x09\x21\x01\x01\x00\x01\x22\x00\x32')
+        m.submodules += self._handlers
 
-    FRAGMENT_UNDER_TEST = GetDescriptorHandlerBlock
-    FRAGMENT_ARGUMENTS = {"descriptor_collection": descriptors}
+        # The multiplexer only stalls when all the underlying handlers do.
+        stalled = [ Signal(name=f"stalled_{i}") for i in range(len(self._handlers)) ]
+        m.d.comb += self.stall.eq(Cat(stalled).all())
 
-    def traces_of_interest(self):
-        dut = self.dut
-        return (dut.value, dut.length, dut.start_position, dut.start, dut.stall,
-                dut.tx.ready, dut.tx.first, dut.tx.last, dut.tx.payload, dut.tx.valid)
+        # Connect the inputs to the descriptor handlers and register any
+        # stall for the current transaction.
+        for i, handler in enumerate(self._handlers):
+            m.d.comb += [
+                handler.value           .eq(self.value),
+                handler.length          .eq(self.length),
+                handler.start           .eq(self.start),
+                handler.start_position  .eq(self.start_position),
+            ]
+            stall_latch = Signal(name=f"stall_latch_{i}")
+            m.d.comb += stalled[i].eq(handler.stall | stall_latch)
+            with m.If(self.start | self.stall):
+                m.d.sync += stall_latch.eq(0)
+            with m.If(handler.stall & ~self.stall):
+                m.d.sync += stall_latch.eq(1)
 
-    def _test_descriptor(self, type_number, index, raw_descriptor, start_position, max_length, delay_ready=0):
-        """ Triggers a read and checks if correct data is transmitted. """
+        # Connect up our transmit interface.
+        m.submodules.tx_mux = tx_mux = OneHotMultiplexer(
+            interface_type=USBInStreamInterface,
+            mux_signals=('payload',),
+            or_signals=('valid', 'first', 'last'),
+            pass_signals=('ready',)
+        )
+        tx_mux.add_interfaces(handler.tx for handler in self._handlers)
+        m.d.comb += self.tx.stream_eq(tx_mux.output)
 
-        # Set a defined start before starting
-        yield self.dut.tx.ready.eq(0)
-        yield
+        # Convert our sync domain to the domain requested by the user, if necessary.
+        if self._domain != "sync":
+            m = DomainRenamer({"sync": self._domain})(m)
 
-        # Set up request
-        yield self.dut.value.word_select(1, 8).eq(type_number)  # Type
-        yield self.dut.value.word_select(0, 8).eq(index)  # Index
-        yield self.dut.length.eq(max_length)
-        yield self.dut.start_position.eq(start_position)
-        yield self.dut.tx.ready.eq(1 if delay_ready == 0 else 0)
-        yield self.dut.start.eq(1)
-        yield
-
-        yield self.dut.start.eq(0)
-
-        yield from self.wait_until(self.dut.tx.valid, timeout=100)
-
-        if delay_ready > 0:
-            for _ in range(delay_ready-1):
-                yield
-            yield self.dut.tx.ready.eq(1)
-            yield
-
-        max_packet_length = 64
-        expected_data = raw_descriptor[start_position:]
-        expected_bytes = min(len(expected_data), max_length-start_position, max_packet_length)
-
-        if expected_bytes == 0:
-            self.assertEqual((yield self.dut.tx.first), 0)
-            self.assertEqual((yield self.dut.tx.last),  1)
-            self.assertEqual((yield self.dut.tx.valid), 1)
-            self.assertEqual((yield self.dut.stall),    0)
-            yield
-
-        else:
-            for i in range(expected_bytes):
-                self.assertEqual((yield self.dut.tx.first),   1 if (i == 0) else 0)
-                self.assertEqual((yield self.dut.tx.last),    1 if (i == expected_bytes - 1) else 0)
-                self.assertEqual((yield self.dut.tx.valid),   1)
-                self.assertEqual((yield self.dut.tx.payload), expected_data[i])
-                self.assertEqual((yield self.dut.stall),      0)
-                yield
-
-        self.assertEqual((yield self.dut.tx.valid), 0)
-
-    def _test_stall(self, type_number, index, start_position, max_length):
-        """ Triggers a read and checks if correctly stalled. """
-
-        yield self.dut.value.word_select(1, 8).eq(type_number)  # Type
-        yield self.dut.value.word_select(0, 8).eq(index)  # Index
-        yield self.dut.length.eq(max_length)
-        yield self.dut.start_position.eq(start_position)
-        yield self.dut.tx.ready.eq(1)
-        yield self.dut.start.eq(1)
-        yield
-
-        yield self.dut.start.eq(0)
-
-        cycles_passed = 0
-        timeout = 100
-
-        while not (yield self.dut.stall):
-            self.assertEqual((yield self.dut.tx.valid), 0)
-            yield
-
-            cycles_passed += 1
-            if timeout and cycles_passed > timeout:
-                raise RuntimeError(f"Timeout waiting for stall!")
-
-    @usb_domain_test_case
-    def test_all_descriptors(self):
-        for type_number, index, raw_descriptor in self.descriptors:
-            yield from self._test_descriptor(type_number, index, raw_descriptor, 0, len(raw_descriptor))
-            yield from self._test_descriptor(type_number, index, raw_descriptor, 0, len(raw_descriptor), delay_ready=10)
-
-    @usb_domain_test_case
-    def test_all_descriptors_with_offset(self):
-        for type_number, index, raw_descriptor in self.descriptors:
-            if len(raw_descriptor) > 1:
-                yield from self._test_descriptor(type_number, index, raw_descriptor, 1, len(raw_descriptor))
-
-    @usb_domain_test_case
-    def test_all_descriptors_with_length(self):
-        for type_number, index, raw_descriptor in self.descriptors:
-            if len(raw_descriptor) > 1:
-                yield from self._test_descriptor(type_number, index, raw_descriptor, 0, min(8, len(raw_descriptor)-1))
-                yield from self._test_descriptor(type_number, index, raw_descriptor, 0, min(8, len(raw_descriptor)-1), delay_ready=10)
-
-    @usb_domain_test_case
-    def test_all_descriptors_with_offset_and_length(self):
-        for type_number, index, raw_descriptor in self.descriptors:
-            if len(raw_descriptor) > 1:
-                yield from self._test_descriptor(type_number, index, raw_descriptor, 1, min(8, len(raw_descriptor)-1))
-
-    @usb_domain_test_case
-    def test_all_descriptors_with_zero_length(self):
-        for type_number, index, raw_descriptor in self.descriptors:
-            yield from self._test_descriptor(type_number, index, raw_descriptor, 0, 0)
-
-    @usb_domain_test_case
-    def test_unavailable_descriptor(self):
-        yield from self._test_stall(StandardDescriptorNumbers.STRING, 100, 0, 64)
-
-    @usb_domain_test_case
-    def test_unavailable_index_type(self):
-        # Unavailable index in between
-        yield from self._test_stall(0x10, 0, 0, 64)
-
-        # Index after last used type
-        yield from self._test_stall(0x42, 0, 0, 64)
-
-if __name__ == "__main__":
-    unittest.main()
+        return m

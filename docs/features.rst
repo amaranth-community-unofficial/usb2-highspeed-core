@@ -89,13 +89,13 @@ Support for Device Mode
 	  -
 	* - **Isochronous Transfers / Endpoints**
 	  - user-defined
-	  - :complete:`feature complete`
+	  - :planned:`planned`
 	* -
 	  - ``IN`` transfer helpers
-	  - :complete:`feature complete`
+	  - :needstest:`complete; needs examples and testing`
 	* -
 	  - ``OUT`` transfer helpers
-	  - :complete:`feature complete`
+	  - :planned:`planned`
 	* -
 	  - CPU interface
 	  - :planned:`planned`
@@ -125,79 +125,78 @@ The LUNA library is intended to work on any FPGA with sufficient fabric performa
 only performed on a collection of reference boards.
 
 .. list-table::
-	:header-rows: 1
-	:widths: 4 2 2 2
+    :header-rows: 1
+    :widths: 4 2 2 2
 
-	* - Board
-	  - FPGA Family
-	  - PHY
-	  - Status
-	* - *LUNA* Hardware
-	  - ECP5
-	  - ULPI x3 (USB3343)
-	  - :complete:`Fully Supported`
-	* - OpenVizsla USB Analyzer
-	  - Spartan 6
-	  - ULPI (USB3343)
-	  - :complete:`Fully Supported`
-	* - LambdaConcept ECPIX-5
-	  - ECP5
-	  - ULPI (USB3300), SerDes PHY
-	  - :complete:`High-Speed Fully Supported` / :inprogress:`Super-Speed In Progress`
-	* - TinyFPGA Ex
-	  - ECP5
-	  - SerDes PHY
-	  - :planned:`Planned Super-Speed Device Mode`
-	* - Logicbone
-	  - ECP5
-	  - SerDes PHY
-	  - :complete:`Full-Speed Fully Supported` / :inprogress:`Super-Speed In Progress`
-	* - Daisho
-	  - Cyclone IV
-	  - PIPE (TUSB1310A)
-	  - :planned:`Planned Super-Speed Device Mode`
-	* - PHYWhisperer-USB
-	  - Spartan 7
-	  - UTMI
-	  - :planned:`Planned Device Mode Support`
-	* - LambdaConcept USB2Sniffer
-	  - Artix 7
-	  - ULPI x2 (USB3300)
-	  - :complete:`Fully Supported`
-	* - OrangeCrab
-	  - ECP5
-	  - no hardware PHY
-	  - :complete:`Full-Speed/Device Mode Support`
-	* - ULX3S
-	  - ECP5
-	  - no hardware PHY
-	  - :complete:`Full-Speed/Device Mode Support`
-	* - Fomu PVT/Hacker
-	  - iCE40 UP
-	  - no hardware PHY
-	  - :complete:`Full-Speed/Device Mode Support`
-	* - Fomu EVT3
-	  - iCE40 UP
-	  - no hardware PHY
-	  - :complete:`Full-Speed/Device Mode Support`
-	* - iCEBreaker Bitsy
-	  - iCE40 UP
-	  - no hardware PHY
-	  - :complete:`Full-Speed/Device Mode Support`
-	* - Glasgow
-	  - iCE40 HX
-	  - no hardware PHY
-	  - :planned:`Planned Full-Speed Support`
-	* - TinyFPGA Bx
-	  - iCE40 LP
-	  - no hardware PHY
-	  - :complete:`Full-Speed/Device Mode Support`
-	* - Digilent Nexys Video (SS with add-on board)
-	  - Artix 7
-	  - FMC for PIPE (TUSB1310A) add-on boards
-	  - :complete:`Super-Speed Fully Supported`
-	* - Digilent Genesys2 (SS with add-on board)
-	  - Kintex 7
-	  - ULPI (TUSB1210), FMC for PIPE (TUSB1310A) add-on boards
-	  - :complete:`High/Super-Speed Fully Supported`
-
+    * - Board
+      - FPGA Family
+      - PHY
+      - Status
+    * - `Cynthion <https://greatscottgadgets.com/cynthion/>`__
+      - ECP5
+      - ULPI x3 (USB3343)
+      - :complete:`Fully Supported`
+    * - OpenVizsla USB Analyzer
+      - Spartan 6
+      - ULPI (USB3343)
+      - :complete:`Fully Supported`
+    * - LambdaConcept ECPIX-5
+      - ECP5
+      - ULPI (USB3300), SerDes PHY
+      - :complete:`High-Speed Fully Supported` / :inprogress:`Super-Speed In Progress`
+    * - TinyFPGA Ex
+      - ECP5
+      - SerDes PHY
+      - :planned:`Planned Super-Speed Device Mode`
+    * - Logicbone
+      - ECP5
+      - SerDes PHY
+      - :complete:`Full-Speed Fully Supported` / :inprogress:`Super-Speed In Progress`
+    * - Daisho
+      - Cyclone IV
+      - PIPE (TUSB1310A)
+      - :planned:`Planned Super-Speed Device Mode`
+    * - PHYWhisperer-USB
+      - Spartan 7
+      - UTMI
+      - :planned:`Planned Device Mode Support`
+    * - LambdaConcept USB2Sniffer
+      - Artix 7
+      - ULPI x2 (USB3300)
+      - :complete:`Fully Supported`
+    * - OrangeCrab
+      - ECP5
+      - no hardware PHY
+      - :complete:`Full-Speed/Device Mode Support`
+    * - ULX3S
+      - ECP5
+      - no hardware PHY
+      - :complete:`Full-Speed/Device Mode Support`
+    * - Fomu PVT/Hacker
+      - iCE40 UP
+      - no hardware PHY
+      - :complete:`Full-Speed/Device Mode Support`
+    * - Fomu EVT3
+      - iCE40 UP
+      - no hardware PHY
+      - :complete:`Full-Speed/Device Mode Support`
+    * - iCEBreaker Bitsy
+      - iCE40 UP
+      - no hardware PHY
+      - :complete:`Full-Speed/Device Mode Support`
+    * - Glasgow
+      - iCE40 HX
+      - no hardware PHY
+      - :planned:`Planned Full-Speed Support`
+    * - TinyFPGA Bx
+      - iCE40 LP
+      - no hardware PHY
+      - :complete:`Full-Speed/Device Mode Support`
+    * - Digilent Nexys Video (SS with add-on board)
+      - Artix 7
+      - FMC for PIPE (TUSB1310A) add-on boards
+      - :complete:`Super-Speed Fully Supported`
+    * - Digilent Genesys2 (SS with add-on board)
+      - Kintex 7
+      - ULPI (TUSB1210), FMC for PIPE (TUSB1310A) add-on boards
+      - :complete:`High/Super-Speed Fully Supported`

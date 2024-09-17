@@ -1,18 +1,22 @@
 #
 # This file is part of LUNA.
 #
-# Copyright (c) 2020 Great Scott Gadgets <info@greatscottgadgets.com>
+# Copyright (c) 2020-2024 Great Scott Gadgets <info@greatscottgadgets.com>
 # SPDX-License-Identifier: BSD-3-Clause
 
 """ Pre-made gateware that implements an ILA connection serial. """
 
 from amaranth                          import Elaboratable, Module, Signal, Cat
 
-from amlib.debug.ila                   import StreamILA, ILAFrontend
+from ...debug.ila                      import StreamILA, ILAFrontend
+from ...stream                         import StreamInterface
 from ..usb2.device                     import USBDevice
+from ..usb2.request                    import USBRequestHandler, StallOnlyRequestHandler
 from ..usb2.endpoints.stream           import USBMultibyteStreamInEndpoint
 
+from usb_protocol.types                import USBRequestType
 from usb_protocol.emitters             import DeviceDescriptorCollection
+from usb_protocol.emitters.descriptors import cdc
 
 
 class USBIntegratedLogicAnalyzer(Elaboratable):
@@ -68,8 +72,8 @@ class USBIntegratedLogicAnalyzer(Elaboratable):
 
         # We'll need a device descriptor...
         with descriptors.DeviceDescriptor() as d:
-            d.idVendor           = 0x16d0
-            d.idProduct          = 0x05a5
+            d.idVendor           = 0x1209
+            d.idProduct          = 0x0002
 
             d.iManufacturer      = "LUNA"
             d.iProduct           = "Integrated Logic Analyzer"
@@ -149,7 +153,7 @@ class USBIntegratedLogicAnalyzerFrontend(ILAFrontend):
         The ILA object to work with.
     """
 
-    def __init__(self, *args, ila, delay=3, idVendor=0x16d0, idProduct=0x5a5, endpoint_no=1, **kwargs):
+    def __init__(self, *args, ila, delay=3, **kwargs):
         import usb
         import time
 
@@ -158,15 +162,15 @@ class USBIntegratedLogicAnalyzerFrontend(ILAFrontend):
             time.sleep(delay)
 
         # Create our USB connection the device
-        self._device = usb.core.find(idVendor=idVendor, idProduct=idProduct)
-        self._endpoint_no = endpoint_no
+        self._device = usb.core.find(idVendor=0x1209, idProduct=0x0002)
+
 
         super().__init__(ila)
 
 
     def _split_samples(self, all_samples):
         """ Returns an iterator that iterates over each sample in the raw binary of samples. """
-        from amlib.utils.bits import bits
+        from apollo_fpga.support.bits import bits
 
         sample_width_bytes = self.ila.bytes_per_sample
 
@@ -184,12 +188,6 @@ class USBIntegratedLogicAnalyzerFrontend(ILAFrontend):
         sample_width_bytes = self.ila.bytes_per_sample
         total_to_read      = self.ila.sample_depth * sample_width_bytes
 
-        # TODO: figure out why the bytes to read sometimes
-        # are greater than the total.
-        # in that case we would get and Overflow error.
-        # If we make instead the bytes to read larger than
-        # the actual file the read will timeout but still
-        # return a correct, full trace
         # Fetch all of our samples from the given device.
-        all_samples = self._device.read(0x80 + self._endpoint_no, 2 *total_to_read, timeout=0)
+        all_samples = self._device.read(0x81, total_to_read, timeout=0)
         return list(self._split_samples(all_samples))

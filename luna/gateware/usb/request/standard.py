@@ -7,7 +7,6 @@
 
 import os
 import operator
-import unittest
 import functools
 from typing import Iterable, Callable
 
@@ -15,14 +14,13 @@ from luna.gateware.test import utils
 
 from amaranth               import *
 from amaranth.hdl.ast       import Value, Const
-from usb_protocol.types     import USBStandardRequests, USBRequestType
+from usb_protocol.types     import USBStandardFeatures, USBStandardRequests, USBRequestRecipient, USBRequestType
 from usb_protocol.emitters  import DeviceDescriptorCollection
 
 from ..usb2.request         import RequestHandlerInterface, USBRequestHandler
-from ..usb2.descriptor      import GetDescriptorHandlerDistributed, GetDescriptorHandlerBlock
+from ..usb2.descriptor      import GetDescriptorHandlerDistributed, GetDescriptorHandlerBlock, GetDescriptorHandlerMux
 from ..stream               import USBInStreamInterface
 from ...stream.generator    import StreamSerializer
-from luna.gateware.usb.usb2 import descriptor
 from .                      import SetupPacket
 from .control               import ControlRequestHandler
 
@@ -55,6 +53,34 @@ class StandardRequestHandler(ControlRequestHandler):
 
         super().__init__()
 
+    
+    def get_descriptor_handler_submodule(self):
+
+        # The distributed handler supports a combination of fixed and runtime descriptors directly...
+        if self._avoid_blockram:
+            return GetDescriptorHandlerDistributed(self.descriptors, max_packet_length=self._max_packet_size)
+
+        # ...but the block handler does not. In this case, first we split the descriptors into two 
+        # collections: fixed descriptors (for the ROM) and runtime descriptors. 
+        fixed_descriptors       = DeviceDescriptorCollection()
+        runtime_descriptors     = DeviceDescriptorCollection()
+        has_runtime_descriptors = False
+        for type_number, index, descriptor in self.descriptors:
+            if isinstance(descriptor, bytes):
+                fixed_descriptors.add_descriptor(descriptor, index=index, descriptor_type=type_number)
+            else:
+                runtime_descriptors.add_descriptor(descriptor, index=index, descriptor_type=type_number)
+                has_runtime_descriptors = True
+
+        # If there are runtime descriptors, we add a get descriptor multiplexer and a distributed handler.
+        if has_runtime_descriptors:
+            handler_mux = GetDescriptorHandlerMux()
+            handler_mux.add_descriptor_handler(GetDescriptorHandlerBlock(fixed_descriptors, max_packet_length=self._max_packet_size))
+            handler_mux.add_descriptor_handler(GetDescriptorHandlerDistributed(runtime_descriptors, max_packet_length=self._max_packet_size))
+            return handler_mux
+        else:
+            return GetDescriptorHandlerBlock(self.descriptors, max_packet_length=self._max_packet_size)
+
 
     def elaborate(self, platform):
         m = Module()
@@ -69,13 +95,8 @@ class StandardRequestHandler(ControlRequestHandler):
         #
         # Submodules
         #
-        if self._avoid_blockram:
-            descriptor_handler_type = GetDescriptorHandlerDistributed
-        else:
-            descriptor_handler_type = GetDescriptorHandlerBlock
-
         # Handler for Get Descriptor requests; responds with our various fixed descriptors.
-        m.submodules.get_descriptor = get_descriptor_handler = descriptor_handler_type(self.descriptors)
+        m.submodules.get_descriptor = get_descriptor_handler = self.get_descriptor_handler_submodule()
         m.d.comb += [
             get_descriptor_handler.value  .eq(setup.value),
             get_descriptor_handler.length .eq(setup.length),
@@ -118,6 +139,8 @@ class StandardRequestHandler(ControlRequestHandler):
 
                                 with m.Case(USBStandardRequests.GET_STATUS):
                                     m.next = 'GET_STATUS'
+                                with m.Case(USBStandardRequests.CLEAR_FEATURE):
+                                    m.next = 'CLEAR_FEATURE'
                                 with m.Case(USBStandardRequests.SET_ADDRESS):
                                     m.next = 'SET_ADDRESS'
                                 with m.Case(USBStandardRequests.SET_CONFIGURATION):
@@ -137,6 +160,30 @@ class StandardRequestHandler(ControlRequestHandler):
                     # TODO: copy the remote wakeup and bus-powered attributes from bmAttributes of the relevant descriptor?
                     self.handle_simple_data_request(m, transmitter, 0, length=2)
 
+                with m.State('CLEAR_FEATURE'):
+                    # Provide an response to the STATUS stage.
+                    with m.If(interface.status_requested):
+
+                        # If our stall condition is met, stall; otherwise, send a ZLP [USB 8.5.3].
+                        # For now, we only implement clearing ENDPOINT_HALT.
+                        stall_condition = \
+                            (setup.recipient != USBRequestRecipient.ENDPOINT) | \
+                            (setup.value     != USBStandardFeatures.ENDPOINT_HALT)
+                        with m.If(stall_condition):
+                            m.d.comb += handshake_generator.stall.eq(1)
+                        with m.Else():
+                            m.d.comb += self.send_zlp()
+
+                    # Accept the relevant value after the packet is ACK'd...
+                    with m.If(interface.handshakes_in.ack):
+                        m.d.comb += [
+                            interface.clear_endpoint_halt.enable   .eq(1),
+                            interface.clear_endpoint_halt.direction.eq(setup.index[7]),
+                            interface.clear_endpoint_halt.number   .eq(setup.index[0:4]),
+                        ]
+
+                        # ... and then return to idle.
+                        m.next = 'IDLE'
 
                 # SET_ADDRESS -- The host is trying to assign us an address.
                 with m.State('SET_ADDRESS'):
@@ -210,7 +257,3 @@ class StandardRequestHandler(ControlRequestHandler):
                         m.next = 'IDLE'
 
         return m
-
-
-if __name__ == "__main__":
-    unittest.main(warnings="ignore")
