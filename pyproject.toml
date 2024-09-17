@@ -3,8 +3,13 @@ requires = ["setuptools>=64", "setuptools-git-versioning<2"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "luna"
-version = "0.2.0"
+name = "luna-usb"
+description = "Amaranth HDL framework for FPGA-based USB solutions"
+license = { text = "BSD" }
+readme = "README.md"
+requires-python = ">=3.8"
+version = "0.0.1"
+
 authors = [
     {name = "Great Scott Gadgets", email = "dev@greatscottgadgets.com"},
     {name = "Hans Baier", email = "foss@hans-baier.de"},
@@ -25,17 +30,14 @@ classifiers = [
     "Topic :: System :: Hardware :: Universal Serial Bus (USB)",
 ]
 
-dynamic = ["version"]
-
 dependencies = [
     "libusb1>1.9.2",
     "pyserial>=3.5",
     "pyusb>1.1.1",
     "pyvcd>=0.2.4",
     "amaranth~=0.4.0",
-    "amaranth-boards @ git+https://github.com/amaranth-farm/amaranth-boards.git@main",
-    "usb-descriptors @ git+https://github.com/hansfbaier/python-usb-descriptors.git@main",
-    "amlib @ git+https://github.com/amaranth-farm/amlib@main"}
+    "usb-descriptors @ git+https://github.com/amaranth-farm/python-usb-descriptors.git@master",
+    "amlib @ git+https://github.com/amaranth-farm/amlib@main",
 ]
 
 [project.optional-dependencies]
@@ -50,7 +52,3 @@ include = ["luna*"]
 
 [tool.pdm.scripts]
 test.cmd = "python -m unittest discover -t . -s tests -v"
-
-[tool.setuptools-git-versioning]
-enabled = true
-starting_version = "0.1.0"
